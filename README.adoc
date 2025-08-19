@@ -1,0 +1,201 @@
+= QQmlApplicationEngine to use properties from QML on the C++ side
+Using the QQmlApplicationEngine, we will also be able to manipulate the QML inside the C++ side of the application
+
+:toc:
+:sectnums:
+:imagesdir: assets/images/
+
+== Introduction
+When you are creating a QQuick application from the QtCreator IDE, the project will be made upon a `QQuickApplicationEngine` in order to manipulate and showing the QML.
+
+IMPORTANT: The most common way to work with QML is by using `QQmlApplicationEngine`, not `QQuickView` as we were doing before this article.
+
+So in this project, we'll do a QML application using the "normal" way to do it, then we'll access the data using the `QQmlApplicationEngine` instead of using the `QQuickView` as we were doing before.
+
+NOTE: So now instead of creating a console application, we'll create a QQuickApplication instead to have a main file that should use the `QQmlApplicationEngine` instead.
+
+== Content
+This project is going to be a `Qt Quick Application` with the following qml file:
+
+```cpp
+import QtQuick
+import QtQuick.Controls
+
+Window {
+    objectName: "rootWindow"
+    id: rootId
+    width: 640
+    height: 480
+    visible: true
+    title: qsTr("QQmlApplicationEngine getting started")
+
+    Rectangle {
+        id: rect1Id
+        objectName: "rect"
+        width: 100
+        height: 100
+        color: "green"
+    }
+
+    Rectangle {
+        id: rect2Id
+        objectName: "rect"
+        anchors.top: rect1Id.bottom
+        width: 100
+        height: 100
+        color: "blue"
+    }
+
+    TextArea {
+        id: textAreaId
+        objectName: "myTextArea"
+        text: qsTr("Some QML text")
+        font.pointSize: 20
+        anchors.left: rect1Id.right
+    }
+
+    Rectangle {
+        id: rect3Id
+        objectName: "rect3"
+        anchors.left: rect1Id.right
+        anchors.top: textAreaId.bottom
+        color: "yellowgreen"
+        width: rect4Id.width // Binding is defined here
+        height: 100
+    }
+
+    Rectangle {
+        id: rect4Id
+        anchors.left: rect1Id.right
+        anchors.top: rect3Id.bottom
+        objectName: "rect4"
+        color: "beige"
+        width: 100
+        height: 100
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                rect4Id.width = rect4Id.width + 20
+            }
+        }
+    }
+}
+```
+Nothing new over here, we're just messing around some rectangles and one text area, nothing really fancy ! The main.cpp on the other hand is .... The same as any QML application:
+
+```cpp
+#include <QQuickStyle>
+#include <QGuiApplication>
+#include <QQmlApplicationEngine>
+
+int main(int argc, char *argv[])
+{
+    QGuiApplication app(argc, argv);
+
+    QQuickStyle::setStyle("Material");
+    QQmlApplicationEngine engine;
+    QObject::connect(
+        &engine,
+        &QQmlApplicationEngine::objectCreationFailed,
+        &app,
+        []() { QCoreApplication::exit(-1); },
+        Qt::QueuedConnection);
+    engine.loadFromModule("QQmlApplicationEngine", "Main");
+
+    return app.exec();
+}
+```
+
+NOTE: By running the application we should have something like this:
+
+image::projectDisplayOverview.png[]
+
+IMPORTANT: Now we want to access to the content of the qml file inside our C++ application !
+
+== QML introspection in C++
+The first thing to note is that the mai is using the `QQmlApplicationEngine` object, that going to be our chief weapons to have access to the QML content and file.
+
+IMPORTANT: We can start by doing a safety check, that is verifying if the root object of the `QQmlApplicationEngine` is empty, in that case, we can't do anything with that !
+
+```cpp
+o_engine.loadFromModule("QQmlApplicationEngine", "Main");
+
+if (o_engine.rootObjects().isEmpty()) {
+    QGuiApplication::exit(-1);
+}
+
+return o_app.exec();
+```
+
+NOTE: The root object is the tree that contains all the object from the QML file.
+
+However, if we pass the check of the root objects, we'll be able to get some information from the root object and display them on the C++ side of the app:
+
+```cpp
+o_engine.loadFromModule("QQmlApplicationEngine", "Main");
+
+if (o_engine.rootObjects().isEmpty()) {
+    QGuiApplication::exit(-1);
+}
+
+QObject *po_rootObject = o_engine.rootObjects().first();
+
+// Show item count
+qDebug() << "Show item count: " << po_rootObject->children().count();
+qDebug() << "Object named: " << po_rootObject->objectName();
+
+return o_app.exec();
+```
+
+NOTE: Using the `.first()` method on the `rootObjects()` method return the first element of the list, the first element is considered the root object in that case.
+
+=== Asking property to object
+By using the root object from the C++ side of the application, we're able to get informations regarding the content of the QML file, for instance, we can get the number of children the root object contains:
+
+```cpp
+QObject *po_rootObject = o_engine.rootObjects().first();
+
+// Show item count
+qDebug() << "Show item count: " << po_rootObject->children().count();
+qDebug() << "Object named: " << po_rootObject->objectName();
+
+return o_app.exec();
+```
+
+The root object that is going to be the first object of the enine can display the number of children it has also its properties such as the objectName.
+
+NOTE: As the QML is a modeling language set as declarative, we can see that in the "Show item count" display, there are 6 elements to it, that means there are 5 elements plus the MouseArea of the fourth rectangle, that makes 6 elements.
+
+NOTE: And if you ran the application and click on the `rect4Id`, the width of the `rect4Id` and the `rect3Id` will change because there is a binding between `rect4Id` and `rect3Id` in the width property.
+
+NOTE: If you take a look at the QML file, you will see that there are several rectangles (two) with the same objectName set as `rect`, that means we can target all rectangles with this object name and then doing something with them.
+
+==== Example of finding a list of qml object
+In some cases, you might need to fetch all the object that contains a property with the same value, you can then use `findChildren` to do so, however, you have to give it a type you want to return. As you are fetching informations regarding the QtQuickItem type:
+
+```cpp
+const auto o_childrens = po_rootObject->findChildren<QQuickItem *>();
+if (o_childrens.count() < 0) {
+    QGuiApplication::exit(-1);
+}
+...
+for (std::size_t i_idx{0}; i_idx < o_childrens.count(); ++i_idx) {
+    QQuickItem *po_item = o_childrens.at(i_idx);
+    if (po_item->property("color").toString().isEmpty())
+        continue;
+    qDebug() << "------------------- ITEM -------------------";
+    qDebug() << "The color is: " << po_item->property("color").toString();
+
+    QVariant o_varColor = po_item->property("color");
+    const auto o_color = po_item->property("color").value<QColor>();
+    const auto o_display = QString("The color component: %1, %2, %3").arg(o_color.red()).arg(o_color.green()).arg(o_color.blue());
+    qDebug() << o_display;
+    if (o_color.green() > 0) {
+        po_item->setProperty("radius", 20);
+    }
+    if (o_color.blue() > 0) {
+        po_item->setProperty("height", 200);
+    }
+}
+```
